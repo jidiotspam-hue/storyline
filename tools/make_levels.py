@@ -1,136 +1,221 @@
 #!/usr/bin/env python3
-"""Generates levels.js from feature placements. Coordinates are tiles; y=0 is the top row, 17 rows."""
-import json, pathlib
+"""Generates levels.js. Each chapter is a seeded run of hand-designed chunks; tools/validate.mjs proves the
+result is beatable. Coordinates are tiles, y=0 is the top row, 17 rows. Every chunk lays its own ground and
+leaves the cursor (s.x) at the next free column with ground expected at height s.h."""
+import json, math, pathlib, random
 
 H = 17
 
 class Lv:
-    def __init__(s, w):
-        s.w = w
-        s.g = [[' '] * w for _ in range(H)]
-    def ground(s, x0, x1, top=15):
+    def __init__(s, seed):
+        s.w = 900
+        s.g = [[' '] * s.w for _ in range(H)]
+        s.x = 0
+        s.h = 14
+        s.r = random.Random(seed)
+        s.since_lamp = 0
+
+    # ---- primitives ----
+    def G(s, x0, x1, top, ice=False):
         for x in range(x0, x1 + 1):
             for y in range(top, H):
-                s.g[y][x] = '#'
-        return s
-    def block(s, x0, x1, y0, y1):
-        for x in range(x0, x1 + 1):
-            for y in range(y0, y1 + 1):
-                s.g[y][x] = '#'
-    def plat(s, x, y, n):
-        for i in range(n):
-            s.g[y][x + i] = '='
+                s.g[y][x] = 'I' if (ice and y == top) else '#'
     def put(s, x, y, c):
+        if 0 <= y < H and s.g[y][x] == ' ':
+            s.g[y][x] = c
+    def force(s, x, y, c):
         s.g[y][x] = c
-    def row(s, x, y, c, n, step=1):
+    def plat(s, x, y, n, c='='):
         for i in range(n):
-            s.g[y][x + i * step] = c
+            s.force(x + i, y, c)
+    def arc(s, x0, n, row, lift=1.6):
+        for i in range(n):
+            r = row - (round(math.sin(math.pi * i / (n - 1)) * lift) if n > 2 else 0)
+            s.put(x0 + i, r, 'o')
+    def clamp(s, h):
+        return max(9, min(14, h))
+    def ri(s, a, b):
+        return s.r.randint(a, b)
+
+    # ---- chunks ----
+    def start(s):
+        s.G(0, 9, s.h); s.force(2, s.h - 1, 'S'); s.arc(5, 4, s.h - 2); s.x = 10
+    def finish(s):
+        x, h = s.x, s.h
+        s.G(x, x + 15, h); s.arc(x + 1, 5, h - 2); s.force(x + 10, h - 1, 'E'); s.x = x + 16
+    def lamp(s):
+        x, h = s.x, s.h
+        s.G(x, x + 5, h); s.force(x + 2, h - 1, 'L'); s.x = x + 6; s.since_lamp = 0
+    def flat(s):
+        x, h, n = s.x, s.h, s.ri(5, 8)
+        s.G(x, x + n - 1, h)
+        if s.r.random() < 0.7: s.arc(x + 1, n - 2, h - 2)
+        s.x += n
+    def step(s):
+        x = s.x
+        nh = s.clamp(s.h + s.r.choice([-2, -1, 1, 2]))
+        if nh == s.h: nh = s.clamp(s.h - 1) if s.h > 9 else s.h + 1
+        s.G(x, x + 4, nh); s.arc(x + 1, 3, nh - 2, 0.6)
+        s.h = nh; s.x += 5
+    def gap(s):
+        x, h, w = s.x, s.h, s.ri(2, 4)
+        nh = s.clamp(h + s.r.choice([-1, 0, 0, 1]))
+        if w == 4 and nh < h: nh = h
+        s.arc(x - 1, w + 2, min(h, nh) - 3)
+        s.G(x + w, x + w + 3, nh); s.h = nh; s.x += w + 4
+    def thorns(s):
+        x, h, k = s.x, s.h, s.ri(2, 3)
+        s.G(x, x + k + 4, h)
+        for i in range(k): s.force(x + 2 + i, h - 1, '^')
+        s.arc(x + 1, k + 2, h - 3)
+        s.x += k + 5
+    def plats(s):
+        x, h, w = s.x, s.h, s.r.choice([7, 9])
+        s.plat(x + 1, h - 2, 2); s.plat(x + 4, h - 3, 2)
+        s.arc(x + 1, 5, h - 4, 1)
+        if w == 9: s.plat(x + 7, h - 2, 2); s.put(x + 7, h - 3, 'o'); s.put(x + 8, h - 3, 'o')
+        s.G(x + w, x + w + 3, h); s.x += w + 4
+    def spring_up(s, page=False):
+        x, h = s.x, s.h
+        s.G(x, x + 10, h); s.force(x + 2, h - 1, 'K')
+        r = max(2, h - 8)
+        s.plat(x + 4, r, 5)
+        for i in range(4): s.put(x + 4 + i, r - 1, 'o')
+        if page: s.force(x + 8, r - 1, 'P')
+        s.arc(x + 4, 5, h - 2, 0.5)
+        s.x += 11
+    def tower(s, page=True):
+        x, h = s.x, s.h
+        if h < 11: return s.spring_up(page)
+        s.G(x, x + 7, h)
+        s.plat(x + 1, h - 3, 3); s.plat(x + 4, h - 6, 3); s.plat(x + 1, h - 9, 3)
+        s.put(x + 5, h - 7, 'o'); s.put(x + 2, h - 4, 'o')
+        if page: s.force(x + 2, h - 10, 'P')
+        else: s.put(x + 2, h - 10, 'o')
+        s.x += 8
+    def crumble(s):
+        x, h, w = s.x, s.h, s.r.choice([8, 10])
+        pairs = [(1, h), (4, h - 1)] + ([(7, h)] if w == 10 else [])
+        for dx, row in pairs:
+            s.plat(x + dx, row, 2, 'C'); s.put(x + dx, row - 1, 'o'); s.put(x + dx + 1, row - 1, 'o')
+        s.G(x + w, x + w + 3, h); s.x += w + 4
+    def enemies(s, n=None):
+        x, h = s.x, s.h
+        n = n or s.ri(1, 2)
+        s.G(x, x + 12, h)
+        for i in range(n): s.force(x + 4 + i * 4, h - 1, 'x')
+        s.arc(x + 2, 9, h - 3, 1)
+        s.x += 13
+    def mover(s):
+        x, h = s.x, s.h
+        s.force(x + 3, h, 'M')
+        s.arc(x, 9, h - 3, 1.2)
+        s.G(x + 9, x + 12, h); s.x += 13
+    def vclimb(s):
+        x, h = s.x, s.h
+        if h < 12: return s.mover()
+        s.G(x, x + 2, h)
+        s.force(x + 4, h - 1, 'V'); s.put(x + 4, h - 5, 'o'); s.put(x + 5, h - 5, 'o')
+        nh = h - 3
+        s.G(x + 7, x + 11, nh); s.arc(x + 8, 3, nh - 2, 0.5)
+        s.h = nh; s.x += 12
+    def ice(s):
+        x, h = s.x, s.h
+        s.G(x, x + 13, h, ice=True)
+        s.force(x + 5, h - 1, '^'); s.force(x + 6, h - 1, '^'); s.force(x + 10, h - 1, '^')
+        s.arc(x + 4, 4, h - 3); s.arc(x + 9, 3, h - 3, 0.8)
+        s.x += 14
+    def blink(s):
+        x, h, w = s.x, s.h, s.r.choice([8, 10])
+        pairs = [1, 4] + ([7] if w == 10 else [])
+        for dx in pairs:
+            s.plat(x + dx, h, 2, 'B'); s.put(x + dx, h - 2, 'o'); s.put(x + dx + 1, h - 2, 'o')
+        s.G(x + w, x + w + 3, h); s.x += w + 4
+    def updraft(s, page=False):
+        x, h = s.x, s.h
+        for col in (x + 3, x + 4):
+            for y in range(h - 6, H): s.force(col, y, 'U')
+        s.plat(x + 6, h - 5, 2)
+        s.put(x + 6, h - 6, 'o'); s.put(x + 7, h - 6, 'o')
+        if page: s.force(x + 4, h - 9, 'P')
+        else:
+            s.put(x + 3, h - 8, 'o'); s.put(x + 4, h - 8, 'o')
+        s.G(x + 9, x + 12, h); s.x += 13
+    def water(s):
+        x, h = s.x, s.h
+        if h < 13: return s.gap()
+        w = s.r.choice([9, 10, 12])
+        for col in range(x, x + w):
+            for y in range(15, H): s.force(col, y, '~')
+        boats = [2, 6] + ([9] if w == 12 else [])
+        for b in boats:
+            s.force(x + b, 14, 'W'); s.put(x + b, 12, 'o'); s.put(x + b + 1, 12, 'o')
+        s.G(x + w, x + w + 3, h); s.x += w + 4
+
     def out(s):
-        return [''.join(r).rstrip() for r in s.g]
+        return [''.join(r[:s.x]).rstrip() for r in s.g]
 
-levels = []
 
-# ---------- Chapter 1: Street by Street ----------
-a = Lv(142)
-a.ground(0, 22); a.put(2, 14, 'S')
-a.row(6, 13, 'o', 3, 2)
-a.ground(16, 22, 13); a.row(17, 12, 'o', 3, 2)
-a.ground(26, 40)
-a.plat(29, 12, 4); a.row(29, 11, 'o', 4)
-a.plat(34, 9, 4); a.put(36, 8, 'P')
-a.row(37, 14, '^', 2)
-a.ground(41, 60); a.put(43, 14, 'L')
-a.put(48, 14, 'K'); a.plat(50, 6, 6); a.row(50, 5, 'o', 3); a.put(54, 5, 'P')
-a.row(52, 14, 'o', 3)
-a.ground(65, 80); a.row(70, 14, '^', 3); a.row(69, 11, 'o', 5)
-a.ground(81, 84, 13); a.ground(85, 88, 11); a.row(85, 10, 'o', 4)
-a.plat(93, 11, 3); a.put(94, 10, 'o')
-a.ground(97, 115, 13); a.put(98, 12, 'L'); a.plat(102, 10, 4); a.put(104, 9, 'P')
-a.row(107, 12, '^', 2); a.row(110, 12, 'o', 4)
-a.ground(116, 141); a.row(118, 14, 'o', 5, 2); a.put(134, 14, 'E')
-levels.append(a)
-
-# ---------- Chapter 2: Falling Behind (crumbling leaves) ----------
-b = Lv(150)
-b.ground(0, 14); b.put(2, 14, 'S'); b.row(6, 13, 'o', 4)
-b.row(17, 14, 'C', 2); b.row(21, 13, 'C', 2); b.row(25, 12, 'C', 2)
-b.row(17, 13, 'o', 2); b.row(25, 11, 'o', 2)
-b.ground(29, 42, 13); b.put(31, 12, 'L'); b.row(36, 12, '^', 2)
-b.plat(39, 9, 3); b.put(40, 7, 'P')
-b.row(46, 12, 'C', 1); b.row(50, 11, 'C', 1); b.row(54, 12, 'C', 1); b.row(58, 13, 'C', 1)
-b.put(46, 11, 'o'); b.put(50, 10, 'o'); b.put(54, 11, 'o'); b.put(58, 12, 'o')
-b.ground(61, 78); b.put(63, 14, 'L'); b.put(68, 14, 'K'); b.row(66, 14, '^', 2); b.row(70, 14, '^', 2)
-b.row(66, 4, 'C', 5); b.row(66, 3, 'o', 3); b.put(70, 3, 'P')
-b.ground(74, 78, 12); b.row(75, 11, 'o', 3)
-b.row(82, 12, 'C', 2); b.row(87, 11, 'C', 2); b.row(92, 12, 'C', 2)
-b.ground(96, 112, 13); b.put(97, 12, 'L'); b.row(101, 12, '^', 3); b.row(100, 9, 'o', 5)
-b.plat(106, 10, 3); b.plat(110, 7, 3); b.put(111, 6, 'P')
-b.row(116, 13, 'C', 2); b.row(120, 13, 'C', 2); b.row(124, 13, 'C', 2)
-b.ground(128, 149); b.row(130, 14, 'o', 5, 2); b.put(143, 14, 'E')
-levels.append(b)
-
-# ---------- Chapter 3: Bewitched (ink blots in a moonlit wood) ----------
-c = Lv(160)
-c.ground(0, 30); c.put(2, 14, 'S'); c.put(16, 14, 'x'); c.row(10, 13, 'o', 4)
-c.plat(20, 11, 4); c.row(20, 10, 'o', 4)
-c.ground(34, 50, 13); c.put(36, 12, 'L'); c.put(44, 12, 'x'); c.row(48, 12, '^', 2)
-c.plat(40, 10, 3); c.put(41, 7, 'P')
-c.ground(54, 70); c.put(58, 14, 'x'); c.put(64, 14, 'x'); c.row(57, 11, 'o', 6)
-c.put(68, 14, 'K'); c.plat(64, 5, 5); c.row(64, 4, 'o', 4)
-c.ground(71, 80, 11); c.put(73, 10, 'x'); c.put(78, 10, 'P')
-c.ground(81, 100); c.put(83, 14, 'L'); c.row(88, 14, '^', 3); c.row(94, 14, '^', 3)
-c.plat(87, 11, 5); c.plat(93, 11, 5); c.put(90, 10, 'x'); c.row(88, 10, 'o', 2); c.row(95, 10, 'o', 2)
-c.plat(104, 12, 3); c.plat(109, 10, 3); c.plat(114, 12, 3); c.row(104, 11, 'o', 3); c.put(110, 8, 'P')
-c.ground(119, 140); c.put(121, 14, 'L'); c.put(126, 14, 'x'); c.put(131, 14, 'x'); c.put(136, 14, 'x')
-c.row(125, 12, 'o', 12)
-c.ground(141, 159, 13); c.put(152, 12, 'E')
-levels.append(c)
-
-# ---------- Chapter 4: Clockwork (moving gears) ----------
-d = Lv(160)
-d.ground(0, 14); d.put(2, 14, 'S'); d.row(6, 13, 'o', 4)
-d.put(19, 13, 'M'); d.row(18, 11, 'o', 4)
-d.ground(26, 36); d.put(28, 14, 'L'); d.put(33, 14, 'x')
-d.put(39, 12, 'V'); d.put(40, 7, 'o')
-d.ground(44, 56, 11); d.put(46, 10, 'x'); d.plat(50, 7, 3); d.put(51, 6, 'P')
-d.put(60, 12, 'M'); d.put(70, 12, 'M'); d.row(60, 10, 'o', 12)
-d.ground(76, 90); d.put(78, 14, 'L'); d.row(82, 14, '^', 4)
-d.put(84, 9, 'V'); d.put(85, 4, 'P'); d.put(85, 6, 'o')
-d.ground(91, 96, 12)
-d.put(100, 11, 'V'); d.put(106, 9, 'V'); d.put(112, 11, 'V'); d.put(101, 8, 'o'); d.put(107, 6, 'o'); d.put(113, 8, 'o')
-d.ground(117, 132); d.put(119, 14, 'L'); d.put(124, 14, 'x'); d.put(129, 14, 'K'); d.plat(124, 5, 4); d.put(125, 4, 'P')
-d.put(136, 13, 'M'); d.row(135, 11, 'o', 4)
-d.ground(143, 159); d.put(152, 14, 'E')
-levels.append(d)
-
-# ---------- Chapter 5: From The Start (rooftops to the stage) ----------
-e = Lv(170)
-e.ground(0, 16, 12); e.put(2, 11, 'S'); e.row(6, 10, 'o', 4)
-e.ground(20, 30, 13); e.put(25, 12, 'x'); e.row(22, 10, 'o', 6)
-e.row(34, 12, 'C', 2); e.row(38, 11, 'C', 2)
-e.ground(42, 54, 11); e.put(44, 10, 'L'); e.row(48, 10, '^', 2); e.plat(47, 8, 4); e.put(48, 6, 'P')
-e.put(58, 11, 'M'); e.row(57, 9, 'o', 4)
-e.ground(66, 80, 13); e.put(70, 12, 'x'); e.put(76, 12, 'K'); e.plat(70, 4, 5); e.put(72, 3, 'P'); e.row(70, 3, 'o', 2)
-e.put(84, 12, 'V'); e.put(90, 10, 'V'); e.row(85, 8, 'o', 1); e.row(91, 6, 'o', 1)
-e.ground(95, 110, 11); e.put(97, 10, 'L'); e.put(103, 10, 'x'); e.put(107, 10, 'x')
-e.row(113, 11, 'C', 2); e.row(117, 10, 'C', 2); e.row(121, 11, 'C', 2); e.put(117, 7, 'P')
-e.ground(125, 136, 13); e.row(129, 12, '^', 3); e.plat(128, 10, 5); e.row(128, 9, 'o', 5)
-e.ground(137, 169, 15); e.put(139, 14, 'L'); e.row(144, 14, 'o', 8, 2); e.put(162, 14, 'E')
-levels.append(e)
-
-meta = [
-    dict(title='Street by Street', chapter='Chapter One', place='a cobblestone town in spring',
-         line='Once, a girl with a cello walked the old streets, humming a song nobody had heard yet.', theme='spring'),
-    dict(title='Falling Behind', chapter='Chapter Two', place='the park at golden hour',
-         line='The leaves let go one by one. Some of them will hold you, just long enough.', theme='autumn'),
-    dict(title='Bewitched', chapter='Chapter Three', place='a moonlit wood',
-         line='Spilled ink crept between the trees. Hop on it, and it turns to butterflies.', theme='moon'),
-    dict(title='Clockwork', chapter='Chapter Four', place='inside the clocktower',
-         line='Every gear keeps its own time. Wait for the right moment, then leap.', theme='clock'),
-    dict(title='From The Start', chapter='Chapter Five', place='the rooftops, to the stage',
-         line='The last page is a stage under the stars, and the whole town is listening.', theme='stage'),
+CHAPTERS = [
+    dict(title='Street by Street', chapter='Chapter One', place='a cobblestone town in spring', theme='spring', n=26,
+         pool=dict(flat=3, step=2, gap=3, thorns=2, plats=2, spring_up=1),
+         line='Once, a girl with a cello walked the old streets, humming a song nobody had heard yet.'),
+    dict(title='Falling Behind', chapter='Chapter Two', place='the park at golden hour', theme='autumn', n=28,
+         pool=dict(flat=2, step=2, gap=2, thorns=1, plats=1, crumble=4, spring_up=1),
+         line='The leaves let go one by one. Some of them will hold you, just long enough.'),
+    dict(title='Magnolia', chapter='Chapter Three', place='the glasshouse garden', theme='garden', n=28,
+         pool=dict(flat=2, step=2, gap=2, thorns=2, plats=1, crumble=1, updraft=4),
+         line='Under the glass the magnolias breathe out warm air. Step into the petals and let them carry you.'),
+    dict(title='California and Me', chapter='Chapter Four', place='a pier at sunset', theme='sea', n=30,
+         pool=dict(flat=2, gap=2, thorns=1, plats=2, water=5, spring_up=1, crumble=1),
+         line='The sun went down over the water, and little boats rocked her across the harbour.'),
+    dict(title='Bewitched', chapter='Chapter Five', place='a moonlit wood', theme='moon', n=30,
+         pool=dict(flat=2, step=2, gap=2, thorns=2, plats=1, enemies=4, spring_up=1, crumble=1),
+         line='Spilled ink crept between the trees. Hop on it, and it turns to butterflies.'),
+    dict(title='Haunted', chapter='Chapter Six', place='the old manor library', theme='haunt', n=32,
+         pool=dict(flat=2, step=2, gap=2, thorns=2, blink=5, enemies=2, plats=1),
+         line='The bookshelves whisper. Some floors are only there when the ghosts remember them.'),
+    dict(title='Snow White', chapter='Chapter Seven', place='a frozen village', theme='snow', n=32,
+         pool=dict(flat=2, step=2, gap=2, ice=5, thorns=1, enemies=2, plats=1, spring_up=1),
+         line='Snow fell all night. The paths are glass now — lean into it, and stop early.'),
+    dict(title='Clockwork', chapter='Chapter Eight', place='inside the clocktower', theme='clock', n=34,
+         pool=dict(flat=2, step=1, gap=2, thorns=1, mover=4, vclimb=3, enemies=2, spring_up=1),
+         line='Every gear keeps its own time. Wait for the right moment, then leap.'),
+    dict(title='Carousel', chapter='Chapter Nine', place='the carnival at dusk', theme='carnival', n=34,
+         pool=dict(flat=2, step=1, gap=2, mover=3, spring_up=2, enemies=3, crumble=2, blink=1, plats=1),
+         line='Round and round the painted horses go. Ride them to the lights at the end of the fair.'),
+    dict(title='From The Start', chapter='Chapter Ten', place='the rooftops, to the stage', theme='stage', n=38,
+         pool=dict(flat=1, step=2, gap=2, thorns=2, plats=1, crumble=2, enemies=2, mover=2, vclimb=1, blink=2, ice=1, updraft=1, spring_up=1),
+         line='The last page is a stage under the stars, and the whole town is listening.'),
 ]
-out = [dict(map=l.out(), **m) for l, m in zip(levels, meta)]
+
+PAGE_CHUNKS = {'garden': 'updraft'}
+
+def build(i, spec):
+    s = Lv(1000 + i * 77)
+    s.start()
+    names = list(spec['pool'].keys()); weights = list(spec['pool'].values())
+    n = spec['n']
+    page_at = {round(n * 0.22), round(n * 0.55), round(n * 0.85)}
+    last = None
+    for k in range(n):
+        if s.since_lamp >= 6 and k < n - 2:
+            s.lamp()
+        if k in page_at:
+            kind = PAGE_CHUNKS.get(spec['theme'], s.r.choice(['tower', 'spring_up']))
+            getattr(s, kind)(page=True)
+        else:
+            c = s.r.choices(names, weights)[0]
+            while c == last and len(names) > 1 and c not in ('flat',):
+                c = s.r.choices(names, weights)[0]
+            getattr(s, c)()
+            last = c
+        s.since_lamp += 1
+    s.finish()
+    return s
+
+levels = [build(i, c) for i, c in enumerate(CHAPTERS)]
+out = [dict(map=l.out(), **{k: v for k, v in c.items() if k not in ('pool', 'n')}) for l, c in zip(levels, CHAPTERS)]
 p = pathlib.Path(__file__).resolve().parent.parent / 'levels.js'
-p.write_text('// Generated by tools/make_levels.py — edit that, not this.\nconst LEVELS = ' + json.dumps(out, indent=1) + ';\nif (typeof module !== "undefined") module.exports = LEVELS;\n')
-print('wrote', p, [l.w for l in levels])
+p.write_text('// Generated by tools/make_levels.py — edit that, not this.\nconst LEVELS = ' + json.dumps(out, indent=0) + ';\nif (typeof module !== "undefined") module.exports = LEVELS;\n')
+print('wrote', p, [l.x for l in levels])
