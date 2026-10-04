@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Storyline — a Laufey storybook</title>
+<meta name="description" content="A cozy storybook platformer set to Laufey songs. Five chapters, fifteen torn pages.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎻</text></svg>">
+<style>
+  :root { --ink:#3b2a26; --paper:#f4ead6; --rose:#c9727a; --blue:#7d93b2; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #2a1f1c; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+  body { display: grid; place-items: center; font-family: 'IM Fell English', Georgia, serif; color: var(--ink); }
+  #wrap { position: relative; width: min(100vw, calc(100vh * 960 / 544)); aspect-ratio: 960 / 544; box-shadow: 0 20px 80px #000a; border-radius: 6px; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: auto; }
+  .screen { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4% 8%;
+    background: radial-gradient(ellipse at center, #f8f0dfe6 0%, #efe1c4ea 70%, #dcc7a0f2 100%); }
+  #title { background: radial-gradient(ellipse at center, #f8f0dfd8 0%, #efe1c4b0 60%, #dcc7a088 100%); }
+  .screen.on { display: flex; }
+  .screen::before { content: ''; position: absolute; inset: 3%; border: 2px solid #3b2a2655; border-radius: 4px; pointer-events: none; outline: 1px solid #3b2a2633; outline-offset: 6px; }
+  h1 { font-family: 'Playfair Display', serif; font-style: italic; font-weight: 500; font-size: clamp(32px, 7vw, 76px); margin: 0; letter-spacing: .01em; }
+  h2 { font-family: 'Playfair Display', serif; font-weight: 500; font-size: clamp(22px, 4vw, 44px); margin: .1em 0 .3em; font-style: italic; }
+  .small { font-size: clamp(12px, 1.6vw, 17px); opacity: .75; letter-spacing: .12em; text-transform: uppercase; }
+  p { font-size: clamp(14px, 2vw, 21px); line-height: 1.45; max-width: 34em; margin: .4em auto; }
+  .flourish { font-size: clamp(16px, 2.4vw, 26px); opacity: .6; margin: .2em 0; }
+  button { font-family: 'IM Fell English', serif; font-size: clamp(15px, 2vw, 22px); color: var(--paper); background: var(--ink); border: 0; padding: .5em 1.4em; border-radius: 999px; cursor: pointer; margin: .5em .3em 0; box-shadow: 0 3px 0 #0003; }
+  button:hover { background: #5a4038; }
+  button.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
+  button:disabled { opacity: .3; cursor: default; }
+  #chapters { display: flex; flex-wrap: wrap; justify-content: center; gap: .4em; margin-top: .6em; max-width: 44em; }
+  #chapters button { font-size: clamp(12px, 1.5vw, 16px); padding: .4em .9em; }
+  .song { display: flex; align-items: center; gap: 1em; margin: .8em auto; text-align: left; background: #fff6; padding: .6em .9em; border-radius: 10px; border: 1px solid #3b2a2622; }
+  .song img { width: clamp(56px, 9vw, 96px); aspect-ratio: 1; border-radius: 4px; box-shadow: 0 4px 14px #0003; }
+  .song b { font-family: 'Playfair Display', serif; font-style: italic; font-size: clamp(16px, 2.2vw, 24px); font-weight: 500; display: block; }
+  .song span { font-size: clamp(12px, 1.5vw, 16px); opacity: .7; }
+  .stats { display: flex; gap: 2em; justify-content: center; font-size: clamp(14px, 2vw, 20px); margin: .3em 0; }
+  .letter { font-style: italic; background: #fffaf0; border: 1px solid #3b2a2633; padding: .8em 1.2em; border-radius: 4px; max-width: 30em; box-shadow: 0 6px 20px #0002; transform: rotate(-1deg); }
+  .hint { font-size: clamp(11px, 1.4vw, 15px); opacity: .6; margin-top: .8em; }
+  #mute { position: absolute; right: 1.2%; top: 2%; z-index: 5; background: #f4ead6cc; color: var(--ink); border: 1px solid #3b2a2644; font-size: clamp(12px, 1.6vw, 16px); padding: .25em .7em; margin: 0; box-shadow: none; }
+  #touch { position: absolute; inset: auto 0 0 0; height: 30%; display: none; z-index: 4; pointer-events: none; }
+  #touch.on { display: block; }
+  #touch div { position: absolute; bottom: 10%; width: 15%; aspect-ratio: 1; border-radius: 50%; background: #f4ead655; border: 2px solid #3b2a2655; pointer-events: auto; display: grid; place-items: center; font-size: 5vw; color: #3b2a2699; }
+  #tl { left: 3%; } #tr { left: 20%; } #tj { right: 4%; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="960" height="544"></canvas>
+  <button id="mute" title="Music on/off (M)">♫ on</button>
+  <div id="touch"><div id="tl">◀</div><div id="tr">▶</div><div id="tj">⤒</div></div>
+
+  <div class="screen on" id="title">
+    <div class="small">a storybook in five songs</div>
+    <h1>Storyline</h1>
+    <div class="flourish">❦</div>
+    <p>A girl, a cello, and fifteen torn pages scattered across town. Find them and the story comes back together.</p>
+    <div><button id="startBtn">Open the book</button></div>
+    <div id="chapters"></div>
+    <div class="hint">← → or A D to walk · Space / W / ↑ to jump · M for music<br>Music: 30-second Laufey previews, streamed from Apple Music</div>
+  </div>
+
+  <div class="screen" id="card">
+    <div class="small" id="cardChapter">Chapter One</div>
+    <h2 id="cardTitle">Street by Street</h2>
+    <div class="flourish">❦</div>
+    <p id="cardLine"></p>
+    <div class="song"><img id="cardArt" alt=""><div><b id="cardSong"></b><span id="cardAlbum"></span></div></div>
+    <div><button id="cardGo">Turn the page</button></div>
+  </div>
+
+  <div class="screen" id="clear">
+    <div class="small" id="clearChapter">Chapter One</div>
+    <h2>The end of the chapter</h2>
+    <div class="stats"><div>♪ <span id="clearNotes"></span></div><div>❦ <span id="clearPages"></span> pages</div><div>✕ <span id="clearDeaths"></span></div></div>
+    <p id="clearLine"></p>
+    <div><button id="clearRetry" class="ghost">Read it again</button><button id="clearNext">Next chapter</button></div>
+  </div>
+
+  <div class="screen" id="end">
+    <div class="small">and so</div>
+    <h1>The End</h1>
+    <div class="stats"><div>♪ <span id="endNotes"></span></div><div>❦ <span id="endPages"></span> pages</div><div>✕ <span id="endDeaths"></span></div></div>
+    <div class="letter" id="endLetter"></div>
+    <div class="song"><img id="endArt" alt=""><div><b id="endSong"></b><span id="endAlbum"></span></div></div>
+    <div><button id="endTitle">Back to the cover</button></div>
+  </div>
+</div>
+<script src="songs.js"></script>
+<script src="levels.js"></script>
+<script src="core.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
